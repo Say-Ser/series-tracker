@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мои Сериалы 🎬</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #121212; color: #ffffff; padding: 20px; max-width: 600px; margin: 0 auto; }
+        h1, h2 { text-align: center; color: #e50914; }
+        .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+        input[type="text"] { flex: 1; padding: 12px; border-radius: 8px; border: none; background: #333; color: white; font-size: 16px; }
+        button { padding: 12px 20px; border-radius: 8px; border: none; background: #e50914; color: white; font-weight: bold; cursor: pointer; }
+        .series-list { list-style: none; padding: 0; }
+        .series-item { background: #1e1e1e; padding: 15px; border-radius: 10px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .series-info { flex: 1; }
+        .series-name { font-weight: bold; font-size: 18px; }
+        .series-date { color: #aaa; font-size: 14px; margin-top: 5px; }
+        .checkbox { width: 24px; height: 24px; cursor: pointer; accent-color: #e50914; }
+        
+        /* Стили для календаря */
+        .calendar-item { background: #2a1a1a; border-left: 4px solid #e50914; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
+        .calendar-date { font-weight: bold; color: #ff6b6b; font-size: 16px; margin-bottom: 5px; }
+        .calendar-info { color: #ddd; font-size: 15px; }
+        .no-date { color: #777; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h1>🎬 Мои Сериалы</h1>
+    
+    <form class="search-box" action="/search" method="GET">
+        <input type="text" name="query" placeholder="Название сериала..." required>
+        <button type="submit">Найти</button>
+    </form>
+
+    {% if search_results %}
+        <h3>Результаты поиска:</h3>
+        <ul class="series-list">
+            {% for series in search_results %}
+            <li class="series-item">
+                <div class="series-info">
+                    <div class="series-name">{{ series.name }}</div>
+                    <div class="series-date">Рейтинг: {{ series.rating }} | ID: {{ series.tmdb_id }}</div>
+                </div>
+                <form action="/add" method="POST">
+                    <input type="hidden" name="tmdb_id" value="{{ series.tmdb_id }}">
+                    <input type="hidden" name="name" value="{{ series.name }}">
+                    <button type="submit">+</button>
+                </form>
+            </li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    <h2>📅 Календарь выхода серий</h2>
+    {% if my_series %}
+        <ul class="series-list">
+            {% for series in my_series %}
+            <li class="calendar-item">
+                <div class="series-name">{{ series.name }}</div>
+                {% if series.next_date %}
+                    <div class="calendar-date">📆 {{ series.next_date }}</div>
+                    <div class="calendar-info">{{ series.next_info }}</div>
+                {% else %}
+                    <div class="calendar-date no-date">{{ series.next_info }}</div>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p style="text-align: center; color: #777;">Список пуст. Найди что-нибудь выше!</p>
+    {% endif %}
+
+    <h2>📺 Прогресс просмотра</h2>
+    {% if my_series %}
+        <ul class="series-list">
+            {% for series in my_series %}
+            <li class="series-item">
+                <div class="series-info">
+                    <div class="series-name">{{ series.name }}</div>
+                    <div class="series-date">Просмотрено: S{{ series.season }}E{{ series.episode }}</div>
+                </div>
+                <input type="checkbox" class="checkbox" onchange="updateProgress({{ series.tmdb_id }}, this)">
+            </li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    <script>
+        function updateProgress(tmdbId, checkbox) {
+            fetch('/update_progress', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({tmdb_id: tmdbId})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    checkbox.style.accentColor = '#4caf50';
+                    setTimeout(() => { 
+                        checkbox.style.accentColor = '#e50914'; 
+                        location.reload(); // Перезагружаем страницу, чтобы обновить цифры
+                    }, 500);
+                }
+            })
+            .catch(error => console.error('Ошибка:', error));
+        }
+    </script>
+</body>
+</html>
