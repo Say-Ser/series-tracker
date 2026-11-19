@@ -1,30 +1,19 @@
 import os
-import sqlite3
 import aiohttp
 import asyncio
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template, request, redirect, url_for
 
-# Берем ключ из настроек хостинга (Render)
+# Берем ключи из настроек хостинга
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 app = Flask(__name__, template_folder="templates")
 
 def get_db_connection():
-    conn = sqlite3.connect("series_tracker.db")
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
-
-def init_db():
-    conn = get_db_connection()
-    conn.execute("""CREATE TABLE IF NOT EXISTS series (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tmdb_id INTEGER NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        season INTEGER DEFAULT 1,
-        episode INTEGER DEFAULT 1
-    )""")
-    conn.commit()
-    conn.close()
 
 async def search_tmdb(query):
     url = f"https://api.themoviedb.org/3/search/tv?api_key={TMDB_API_KEY}&query={query}&language=ru-RU"
@@ -52,16 +41,12 @@ async def get_next_episode_info(tmdb_id):
                     return {"date": None, "text": "Сериал завершен или дата не объявлена"}
     return {"date": None, "text": "Нет данных"}
 
-@app.route('/')
-def index():
-    conn = get_db_connection()
-    series_list = conn.execute('SELECT * FROM series').fetchall()
-    conn.close()
-    
-    enriched_series = []
+def enrich_series_list(series_list):
+    """Получает информацию о следующей серии для списка сериалов"""
+    enriched = []
     for s in series_list:
         next_ep = asyncio.run(get_next_episode_info(s['tmdb_id']))
-        enriched_series.append({
+        enriched.append({
             "tmdb_id": s['tmdb_id'],
             "name": s['name'],
             "season": s['season'],
@@ -69,6 +54,18 @@ def index():
             "next_date": next_ep["date"],
             "next_info": next_ep["text"]
         })
+    return enriched
+
+@app.route('/')
+def index():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM series WHERE user_id = %s ORDER BY name', ('web_user',))
+    series_list = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    enriched_series = enrich_series_list(series_list)
     return render_template('index.html', my_series=enriched_series, search_results=None)
 
 @app.route('/search')
@@ -78,21 +75,15 @@ def search():
         return redirect(url_for('index'))
     
     results = asyncio.run(search_tmdb(query))
+    
     conn = get_db_connection()
-    series_list = conn.execute('SELECT * FROM series').fetchall()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM series WHERE user_id = %s ORDER BY name', ('web_user',))
+    series_list = cur.fetchall()
+    cur.close()
     conn.close()
     
-    enriched_series = []
-    for s in series_list:
-        next_ep = asyncio.run(get_next_episode_info(s['tmdb_id']))
-        enriched_series.append({
-            "tmdb_id": s['tmdb_id'],
-            "name": s['name'],
-            "season": s['season'],
-            "episode": s['episode'],
-            "next_date": next_ep["date"],
-            "next_info": next_ep["text"]
-        })
+    enriched_series = enrich_series_list(series_list)
     return render_template('index.html', my_series=enriched_series, search_results=results)
 
 @app.route('/add', methods=['POST'])
@@ -100,11 +91,16 @@ def add():
     tmdb_id = request.form.get('tmdb_id')
     name = request.form.get('name')
     conn = get_db_connection()
+    cur = conn.cursor()
     try:
-        conn.execute("INSERT INTO series (tmdb_id, name) VALUES (?, ?)", (tmdb_id, name))
+        cur.execute(
+            "INSERT INTO series (tmdb_id, name, user_id) VALUES (%s, %s, %s)",
+            (tmdb_id, name, 'web_user')
+        )
         conn.commit()
-    except sqlite3.IntegrityError:
-        pass
+    except psycopg2.IntegrityError:
+        conn.rollback()
+    cur.close()
     conn.close()
     return redirect(url_for('index'))
 
@@ -113,13 +109,16 @@ def update_progress():
     data = request.json
     tmdb_id = data.get('tmdb_id')
     conn = get_db_connection()
-    conn.execute("UPDATE series SET episode = episode + 1 WHERE tmdb_id = ?", (tmdb_id,))
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE series SET episode = episode + 1 WHERE tmdb_id = %s AND user_id = %s",
+        (tmdb_id, 'web_user')
+    )
     conn.commit()
+    cur.close()
     conn.close()
     return {"status": "success"}
 
 if __name__ == '__main__':
-    init_db()
-    # Render автоматически назначает порт через переменную окружения PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
